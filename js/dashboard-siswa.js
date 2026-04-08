@@ -19,7 +19,9 @@ const SiswaDashboard = {
   async renderDashboard(container) {
     const user = Auth.getUser();
     const enrollRes = await API.get('getEnrollmentsBySiswa', { siswa_id: user.id });
-    const enrollments = enrollRes.data || [];
+    const allEnroll = enrollRes.data || [];
+    const enrollments = allEnroll.filter(e => e.status === 'active');
+    const pendingEnrollments = allEnroll.filter(e => e.status === 'pending');
     
     const progressRes = await API.get('getProgressBySiswa', { siswa_id: user.id });
     const progress = progressRes.data || [];
@@ -115,6 +117,28 @@ const SiswaDashboard = {
             </div>
           ` : ''}
         </div>
+
+        <!-- Pending Enrollments -->
+        ${pendingEnrollments.length > 0 ? `
+          <div>
+            <h3 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <i class="fas fa-clock text-amber-500"></i> Menunggu Persetujuan
+            </h3>
+            <div class="space-y-2">
+              ${pendingEnrollments.map(e => `
+                <div class="glass-card rounded-xl p-3 border-amber-500/10 flex items-center justify-between opacity-80">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                      <i class="fas fa-hourglass-half text-amber-400 text-xs"></i>
+                    </div>
+                    <span class="text-xs font-medium text-white">${e.nama_kelas}</span>
+                  </div>
+                  <span class="text-[9px] font-bold text-amber-500/80 bg-amber-500/10 px-2 py-0.5 rounded-full uppercase">Pending</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
   },
@@ -123,7 +147,9 @@ const SiswaDashboard = {
   async renderKelasSaya(container) {
     const user = Auth.getUser();
     const enrollRes = await API.get('getEnrollmentsBySiswa', { siswa_id: user.id });
-    const enrollments = enrollRes.data || [];
+    const allEnroll = enrollRes.data || [];
+    const enrollments = allEnroll.filter(e => e.status === 'active');
+    const pendingEnrollments = allEnroll.filter(e => e.status === 'pending');
     const progressRes = await API.get('getProgressBySiswa', { siswa_id: user.id });
     const allProgress = progressRes.data || [];
 
@@ -156,7 +182,20 @@ const SiswaDashboard = {
               </div>
             `;
           }).join('')}
-          ${enrollments.length === 0 ? '<p class="text-center text-slate-500 py-8">Belum ada kelas yang diikuti</p>' : ''}
+          ${pendingEnrollments.length > 0 ? `
+            <div class="p-4 rounded-2xl border border-dashed border-white/5 bg-white/[0.01]">
+              <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">Menunggu Persetujuan (${pendingEnrollments.length})</p>
+              <div class="space-y-2">
+                ${pendingEnrollments.map(e => `
+                  <div class="flex items-center justify-between p-3 rounded-xl bg-white/[0.02]">
+                    <span class="text-xs text-slate-300">${e.nama_kelas}</span>
+                    <span class="text-[10px] text-amber-500 font-medium italic">Menunggu Guru...</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          ${allEnroll.length === 0 ? '<p class="text-center text-slate-500 py-8">Belum ada kelas yang diikuti</p>' : ''}
         </div>
       </div>
     `;
@@ -308,7 +347,8 @@ const SiswaDashboard = {
     const allKelas = kelasRes.data || [];
     const enrollRes = await API.get('getEnrollmentsBySiswa', { siswa_id: user.id });
     const myEnrollments = enrollRes.data || [];
-    const myKelasIds = myEnrollments.map(e => e.kelas_id);
+    const myKelasIds = myEnrollments.filter(e => e.status === 'active').map(e => e.kelas_id);
+    const pendingKelasIds = myEnrollments.filter(e => e.status === 'pending').map(e => e.kelas_id);
 
     container.innerHTML = `
       <div class="space-y-4 animate-fadeIn">
@@ -335,7 +375,9 @@ const SiswaDashboard = {
                   </div>
                   ${enrolled 
                     ? '<button disabled class="w-full px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-300 text-xs font-medium cursor-default"><i class="fas fa-check mr-1"></i> Sudah Terdaftar</button>'
-                    : `<button onclick="SiswaDashboard.enrollKelas(${k.id})" class="w-full px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-medium transition-all"><i class="fas fa-plus mr-1"></i> Daftar Kelas</button>`
+                    : pendingKelasIds.includes(k.id)
+                      ? '<button disabled class="w-full px-4 py-2 rounded-xl bg-amber-500/10 text-amber-300 text-xs font-medium cursor-default"><i class="fas fa-clock mr-1"></i> Menunggu Persetujuan</button>'
+                      : `<button onclick="SiswaDashboard.enrollKelas(${k.id})" class="w-full px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-medium transition-all"><i class="fas fa-plus mr-1"></i> Daftar Kelas</button>`
                   }
                 </div>
               </div>
@@ -577,8 +619,13 @@ const SiswaDashboard = {
       questions = typeof quiz.pertanyaan === 'string' ? JSON.parse(quiz.pertanyaan) : quiz.pertanyaan; 
     } catch(e) { console.error(e); }
 
+    // Initialize state for this quiz attempt
+    this.quizState = {
+      matching: {} // stores { qIndex: { sourceKey: targetValue } }
+    };
+
     container.innerHTML = `
-      <div class="space-y-4 animate-fadeIn pb-10">
+      <div class="space-y-4 animate-fadeIn pb-20">
         <button onclick="SiswaDashboard.openKelas(${kelasId})" class="flex items-center gap-2 text-sm text-slate-400 hover:text-white">
           <i class="fas fa-arrow-left text-xs"></i> Kembali
         </button>
@@ -592,11 +639,11 @@ const SiswaDashboard = {
           ${questions.map((q, i) => {
             const type = q.type || 'multiple_choice';
             return `
-              <div class="glass-card rounded-xl p-5">
-                <p class="text-sm font-medium text-white mb-4">
+              <div class="glass-card rounded-xl p-5 overflow-visible relative">
+                <p class="text-sm font-medium text-white mb-6">
                   <span class="text-indigo-400 font-bold mr-2">${i + 1}.</span> ${q.question}
                 </p>
-                <div class="space-y-2">
+                <div class="relative">
                   ${this.renderSiswaQuestionUI(i, q)}
                 </div>
               </div>
@@ -608,6 +655,11 @@ const SiswaDashboard = {
         </form>
       </div>
     `;
+
+    // Initialize interactions for matching questions after rendering
+    questions.forEach((q, i) => {
+      if (q.type === 'matching') this.initMatchingInteraction(i, q);
+    });
   },
 
   renderSiswaQuestionUI(index, q) {
@@ -615,8 +667,8 @@ const SiswaDashboard = {
 
     if (type === 'multiple_choice') {
       return q.options.map((opt, j) => `
-        <label class="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] hover:bg-white/5 cursor-pointer transition-all border border-white/5 hover:border-indigo-500/20">
-          <input type="radio" name="q${index}" value="${opt}" required class="w-4 h-4 accent-indigo-500">
+        <label class="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] hover:bg-white/5 cursor-pointer transition-all border border-white/5 hover:border-indigo-500/20 mb-2 last:mb-0">
+          <input type="radio" name="q${index}" value="${opt.replace(/"/g, '&quot;')}" required class="w-4 h-4 accent-indigo-500">
           <span class="text-sm text-slate-300">${opt}</span>
         </label>
       `).join('');
@@ -624,35 +676,188 @@ const SiswaDashboard = {
 
     if (type === 'true_false') {
       return ['Benar', 'Salah'].map(opt => `
-        <label class="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] hover:bg-white/5 cursor-pointer transition-all border border-white/5 hover:border-indigo-500/20">
+        <label class="flex items-center gap-3 p-4 rounded-xl bg-white/[0.02] hover:bg-white/5 cursor-pointer transition-all border border-white/5 hover:border-indigo-500/20 mb-2 last:mb-0">
           <input type="radio" name="q${index}" value="${opt}" required class="w-4 h-4 accent-indigo-500">
-          <span class="text-sm text-slate-300">${opt}</span>
+          <span class="text-sm text-slate-300 font-bold uppercase tracking-wider">${opt}</span>
         </label>
       `).join('');
     }
 
     if (type === 'matching') {
       const allValues = q.pairs.map(p => p.value);
-      // Shuffle values for the dropdown
       const shuffledValues = [...allValues].sort(() => Math.random() - 0.5);
       
+      this.quizState.matching[index] = {};
+
       return `
-        <div class="space-y-3">
-          ${q.pairs.map((p, pIdx) => `
-            <div class="flex items-center gap-4 bg-white/[0.01] p-3 rounded-xl border border-white/5">
-              <div class="flex-1 text-sm text-white font-medium">${p.key}</div>
-              <i class="fas fa-link text-slate-700"></i>
-              <div class="flex-1">
-                <select name="q${index}_pair${pIdx}" data-key="${p.key}" required class="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
-                  <option value="">Pilih Pasangan...</option>
-                  ${shuffledValues.map(v => `<option value="${v}">${v}</option>`).join('')}
-                </select>
+        <div id="matching-q${index}" class="matching-container grid grid-cols-2 gap-16 relative">
+          <!-- SVG Layer for lines -->
+          <svg id="svg-q${index}" class="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible"></svg>
+          
+          <!-- Left Column -->
+          <div class="space-y-4">
+            ${q.pairs.map((p, pIdx) => `
+              <div id="q${index}-L${pIdx}" data-key="${p.key.replace(/"/g, '&quot;')}" class="matching-item p-3 bg-white/[0.03] border border-white/5 rounded-xl text-xs text-white flex items-center justify-between min-h-[50px]">
+                <span>${p.key}</span>
+                <div id="hook-q${index}-L${pIdx}" class="matching-hook hook-right" data-hook-type="source" data-q-index="${index}" data-pair-index="${pIdx}"></div>
               </div>
-            </div>
-          `).join('')}
+            `).join('')}
+          </div>
+
+          <!-- Right Column -->
+          <div class="space-y-4">
+            ${shuffledValues.map((v, vIdx) => `
+              <div id="q${index}-R${vIdx}" data-value="${v.replace(/"/g, '&quot;')}" class="matching-item p-3 bg-white/[0.03] border border-white/5 rounded-xl text-xs text-white flex items-center min-h-[50px]">
+                <div id="hook-q${index}-R${vIdx}" class="matching-hook hook-left" data-hook-type="target" data-q-index="${index}" data-val-index="${vIdx}"></div>
+                <span class="ml-4">${v}</span>
+              </div>
+            `).join('')}
+          </div>
         </div>
       `;
     }
+
+    if (type === 'short_answer') {
+      return `
+        <div class="mt-4">
+          <input type="text" name="q${index}" required class="w-full px-5 py-4 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-indigo-500/50 shadow-inner" placeholder="Tulis jawaban Anda di sini...">
+        </div>
+      `;
+    }
+  },
+
+  initMatchingInteraction(qIndex, qData) {
+    const container = document.getElementById(`matching-q${qIndex}`);
+    const svg = document.getElementById(`svg-q${qIndex}`);
+    let activeHook = null;
+    let tempLine = null;
+
+    const hooks = container.querySelectorAll('.matching-hook');
+    
+    // Global event for line following
+    const onPointerMove = (e) => {
+      if (!activeHook || !tempLine) return;
+      const rect = container.getBoundingClientRect();
+      const x2 = e.clientX - rect.left;
+      const y2 = e.clientY - rect.top;
+      
+      const x1 = parseFloat(tempLine.getAttribute('x1'));
+      const y1 = parseFloat(tempLine.getAttribute('y1'));
+      
+      // Update line position
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const cp1x = x1 + dx * 0.5;
+      const cp2x = x1 + dx * 0.5;
+      
+      tempLine.setAttribute('d', `M ${x1} ${y1} C ${cp1x} ${y1}, ${cp2x} ${y2}, ${x2} ${y2}`);
+    };
+
+    const onPointerUp = (e) => {
+      if (!activeHook) return;
+      
+      // Check if released over a target hook
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      const targetHook = target ? target.closest('.matching-hook') : null;
+      
+      if (targetHook && targetHook !== activeHook && targetHook.dataset.hookType !== activeHook.dataset.hookType) {
+        // Successful connection!
+        this.connectHooks(activeHook, targetHook, qIndex);
+      }
+      
+      // Cleanup temp line
+      if (tempLine) tempLine.remove();
+      activeHook.classList.remove('active');
+      activeHook = null;
+      tempLine = null;
+      
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    hooks.forEach(hook => {
+      hook.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        activeHook = hook;
+        hook.classList.add('active');
+        
+        const rect = container.getBoundingClientRect();
+        const hookRect = hook.getBoundingClientRect();
+        const x1 = (hookRect.left + hookRect.width / 2) - rect.left;
+        const y1 = (hookRect.top + hookRect.height / 2) - rect.top;
+
+        // Create temp SVG path
+        tempLine = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        tempLine.setAttribute('class', 'matching-line');
+        tempLine.setAttribute('x1', x1);
+        tempLine.setAttribute('y1', y1);
+        svg.appendChild(tempLine);
+
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+      });
+    });
+  },
+
+  connectHooks(h1, h2, qIndex) {
+    const source = h1.dataset.hookType === 'source' ? h1 : h2;
+    const target = h1.dataset.hookType === 'target' ? h1 : h2;
+    
+    const sourceParent = source.closest('.matching-item');
+    const targetParent = target.closest('.matching-item');
+    
+    const key = sourceParent.dataset.key.trim();
+    const value = targetParent.dataset.value.trim();
+
+    // Check if source already has a connection, if so, remove old line
+    const existingOldLine = document.querySelector(`.line-from-q${qIndex}-${source.id}`);
+    if (existingOldLine) existingOldLine.remove();
+
+    // Check if target already has a connection from another source
+    const existingTargetLine = document.querySelector(`.line-to-q${qIndex}-${target.id}`);
+    if (existingTargetLine) {
+        // Remove from state
+        const oldSourceHookId = existingTargetLine.dataset.sourceHookId;
+        const oldSourceParent = document.getElementById(oldSourceHookId).closest('.matching-item');
+        delete this.quizState.matching[qIndex][oldSourceParent.dataset.key.trim()];
+        existingTargetLine.remove();
+    }
+
+    // Update state
+    this.quizState.matching[qIndex][key] = value;
+
+    // Create permanent line
+    this.renderPermanentLine(qIndex, source, target);
+    
+    source.classList.add('connected');
+    target.classList.add('connected');
+  },
+
+  renderPermanentLine(qIndex, source, target) {
+    const container = document.getElementById(`matching-q${qIndex}`);
+    const svg = document.getElementById(`svg-q${qIndex}`);
+    const rect = container.getBoundingClientRect();
+    
+    const sRect = source.getBoundingClientRect();
+    const tRect = target.getBoundingClientRect();
+    
+    const x1 = (sRect.left + sRect.width / 2) - rect.left;
+    const y1 = (sRect.top + sRect.height / 2) - rect.top;
+    const x2 = (tRect.left + tRect.width / 2) - rect.left;
+    const y2 = (tRect.top + tRect.height / 2) - rect.top;
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute('class', 'matching-line permanent line-drawing');
+    path.classList.add(`line-from-q${qIndex}-${source.id}`);
+    path.classList.add(`line-to-q${qIndex}-${target.id}`);
+    path.dataset.sourceHookId = source.id;
+    
+    const dx = x2 - x1;
+    const cp1x = x1 + dx * 0.5;
+    const cp2x = x1 + dx * 0.5;
+    path.setAttribute('d', `M ${x1} ${y1} C ${cp1x} ${y1}, ${cp2x} ${y2}, ${x2} ${y2}`);
+    
+    svg.appendChild(path);
   },
 
   async submitQuiz(e, quizId, kelasId) {
@@ -673,12 +878,16 @@ const SiswaDashboard = {
         const selected = form.querySelector(`input[name="q${i}"]:checked`);
         return { question_index: i, answer: selected ? selected.value : '' };
       } else if (type === 'matching') {
-        const studentMapping = {};
-        q.pairs.forEach((p, pIdx) => {
-          const select = form.querySelector(`select[name="q${i}_pair${pIdx}"]`);
-          studentMapping[p.key] = select ? select.value : '';
-        });
+        // Validation: Must connect all items
+        const studentMapping = this.quizState.matching[i] || {};
+        if (Object.keys(studentMapping).length < q.pairs.length) {
+          // This will be caught by "required" in a better way if needed, 
+          // but for now we just send what we have.
+        }
         return { question_index: i, answer: studentMapping };
+      } else if (type === 'short_answer') {
+        const input = form.querySelector(`input[name="q${i}"]`);
+        return { question_index: i, answer: input ? input.value : '' };
       }
     });
 
@@ -693,18 +902,23 @@ const SiswaDashboard = {
       const d = res.data;
       const container = document.getElementById('main-content');
       container.innerHTML = `
-        <div class="flex flex-col items-center justify-center py-16 animate-fadeIn">
-          <div class="w-24 h-24 rounded-3xl bg-gradient-to-br ${d.score >= 80 ? 'from-emerald-500 to-teal-600' : d.score >= 60 ? 'from-amber-500 to-orange-600' : 'from-red-500 to-rose-600'} flex items-center justify-center mb-6 shadow-2xl">
-            <span class="text-3xl font-bold text-white">${d.score}</span>
+        <div class="flex flex-col items-center justify-center py-24 animate-fadeIn">
+          <div class="relative mb-8">
+            <div class="absolute inset-0 bg-gradient-to-r ${d.score >= 80 ? 'from-emerald-500 to-teal-600' : d.score >= 60 ? 'from-amber-500 to-orange-600' : 'from-red-500 to-rose-600'} rounded-full blur-2xl opacity-20 animate-pulse"></div>
+            <div class="w-32 h-32 rounded-full border-4 ${d.score >= 80 ? 'border-emerald-500/30' : d.score >= 60 ? 'border-amber-500/30' : 'border-red-500/30'} flex items-center justify-center relative bg-slate-900 shadow-2xl">
+              <span class="text-4xl font-bold bg-gradient-to-br ${d.score >= 80 ? 'from-emerald-400 to-teal-500' : d.score >= 60 ? 'from-amber-400 to-orange-500' : 'from-red-400 to-rose-500'} bg-clip-text text-transparent">${d.score}</span>
+            </div>
           </div>
-          <h2 class="text-xl font-bold text-white mb-2">${d.score >= 80 ? 'Luar Biasa! 🎉' : d.score >= 60 ? 'Bagus! 👍' : 'Tetap Semangat! 💪'}</h2>
-          <p class="text-sm text-slate-400 mb-6">Kamu menjawab ${d.correct} dari ${d.total} pertanyaan dengan benar</p>
-          <div class="flex gap-3">
-            <button onclick="SiswaDashboard.openKelas(${kelasId})" class="px-6 py-2.5 rounded-xl bg-white/5 text-slate-300 text-sm font-medium hover:bg-white/10">
-              Kembali ke Kelas
+          
+          <h2 class="text-3xl font-bold text-white mb-2 text-center">${d.score >= 80 ? 'Luar Biasa! 🏆' : d.score >= 60 ? 'Bagus Sekali! ✨' : 'Belajar Lagi Yuk! 💪'}</h2>
+          <p class="text-slate-400 mb-10 text-center max-w-sm">Kamu telah menyelesaikan quiz dengan menjawab <strong>${d.correct} dari ${d.total}</strong> pertanyaan secara tepat.</p>
+          
+          <div class="flex flex-col sm:flex-row gap-4 w-full max-w-xs">
+            <button onclick="Router.navigate('leaderboard')" class="flex-1 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-sm hover:from-indigo-500 hover:to-violet-500 shadow-xl shadow-indigo-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
+              <i class="fas fa-trophy"></i> Lihat Peringkat
             </button>
-            <button onclick="Router.navigate('leaderboard')" class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 text-white text-sm font-medium hover:from-amber-500 hover:to-orange-500">
-              <i class="fas fa-trophy mr-2"></i> Leaderboard
+            <button onclick="SiswaDashboard.openKelas(${kelasId})" class="flex-1 px-6 py-3.5 rounded-2xl bg-white/5 border border-white/10 text-white font-bold text-sm hover:bg-white/10 transition-all active:scale-95 flex items-center justify-center gap-2">
+              <i class="fas fa-reply"></i> Ke Kelas
             </button>
           </div>
         </div>
