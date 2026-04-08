@@ -12,6 +12,7 @@ const GuruDashboard = {
       case 'materi': return this.renderMateri(container);
       case 'quiz': return this.renderQuiz(container);
       case 'progress-siswa': return this.renderProgressSiswa(container);
+      case 'permintaan-siswa': return this.renderPermintaanSiswa(container);
       default: return this.renderDashboard(container);
     }
   },
@@ -75,6 +76,22 @@ const GuruDashboard = {
             <p class="text-[11px] text-slate-500">Materi</p>
           </div>
         </div>
+
+        <!-- Pending Approval Alert -->
+        ${allEnroll.filter(e => e.status === 'pending' && kelasList.some(k => k.id == e.kelas_id)).length > 0 ? `
+          <div class="glass-card rounded-2xl p-4 bg-amber-500/10 border-amber-500/20 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                <i class="fas fa-user-clock text-amber-400"></i>
+              </div>
+              <div>
+                <p class="text-sm font-bold text-white">Ada Permintaan Bergabung!</p>
+                <p class="text-[11px] text-slate-400">Beberapa siswa menunggu persetujuan Anda.</p>
+              </div>
+            </div>
+            <button onclick="Router.navigate('permintaan-siswa')" class="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-900 text-[10px] font-bold hover:bg-amber-400 transition-all">LIHAT SEMUA</button>
+          </div>
+        ` : ''}
 
         <!-- My Classes -->
         <div class="glass-card rounded-2xl p-6">
@@ -259,15 +276,39 @@ const GuruDashboard = {
   showMateriForm(materi = null) {
     document.getElementById('materi-modal').classList.remove('hidden');
     document.getElementById('materi-modal-title').textContent = materi ? 'Edit Materi' : 'Tambah Materi';
-    document.getElementById('materi-id').value = materi ? materi.id : '';
-    document.getElementById('materi-judul').value = materi ? materi.judul : '';
-    document.getElementById('materi-tipe').value = materi ? materi.tipe : 'text';
-    document.getElementById('materi-konten').value = materi ? materi.konten : '';
-    document.getElementById('materi-url').value = materi ? materi.url || '' : '';
     document.getElementById('materi-urutan').value = materi ? materi.urutan : 1;
+
+    // Initialize Summernote
+    $('#materi-konten').summernote({
+      placeholder: 'Tulis isi materi di sini...',
+      tabsize: 2,
+      height: 200,
+      toolbar: [
+        ['style', ['style']],
+        ['font', ['bold', 'underline', 'clear']],
+        ['color', ['color']],
+        ['para', ['ul', 'ol', 'paragraph']],
+        ['table', ['table']],
+        ['insert', ['link', 'picture', 'video']],
+        ['view', ['fullscreen', 'codeview', 'help']]
+      ],
+      styleTags: ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+      callbacks: {
+        onInit: function() {
+          $('.note-editable').addClass('text-sm text-slate-300');
+          $('.note-toolbar').addClass('bg-slate-800 border-white/5');
+          $('.note-resizebar').addClass('bg-slate-800');
+        }
+      }
+    });
+    if (materi) $('#materi-konten').summernote('code', materi.konten);
+    else $('#materi-konten').summernote('code', '');
   },
 
-  closeMateriForm() { document.getElementById('materi-modal').classList.add('hidden'); },
+  closeMateriForm() { 
+    $('#materi-konten').summernote('destroy');
+    document.getElementById('materi-modal').classList.add('hidden'); 
+  },
 
   async editMateri(id) {
     const res = await API.get('getMateri');
@@ -282,7 +323,7 @@ const GuruDashboard = {
       kelas_id: this.selectedKelasId,
       judul: document.getElementById('materi-judul').value,
       tipe: document.getElementById('materi-tipe').value,
-      konten: document.getElementById('materi-konten').value,
+      konten: $('#materi-konten').summernote('code'),
       url: document.getElementById('materi-url').value,
       urutan: parseInt(document.getElementById('materi-urutan').value),
     };
@@ -455,6 +496,7 @@ const GuruDashboard = {
                 <option value="multiple_choice" ${type === 'multiple_choice' ? 'selected' : ''}>Pilihan Ganda</option>
                 <option value="true_false" ${type === 'true_false' ? 'selected' : ''}>Benar / Salah</option>
                 <option value="matching" ${type === 'matching' ? 'selected' : ''}>Menjodohkan</option>
+                <option value="short_answer" ${type === 'short_answer' ? 'selected' : ''}>Uraian Singkat</option>
               </select>
             </div>
           </div>
@@ -518,6 +560,16 @@ const GuruDashboard = {
               </div>
             `).join('')}
           </div>
+        </div>
+      `;
+    }
+
+    if (type === 'short_answer') {
+      return `
+        <div class="space-y-2">
+          <label class="block text-[10px] font-bold text-slate-500 uppercase">Jawaban Benar</label>
+          <input type="text" value="${q.correct_answer || ''}" onchange="GuruDashboard.updateQuestionData(${index}, 'correct_answer', this.value)" class="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-indigo-500/50" placeholder="Tulis jawaban yang benar di sini...">
+          <p class="text-[10px] text-slate-500 italic"><i class="fas fa-info-circle mr-1"></i> Jawaban siswa akan dicocokkan (tidak peka huruf besar/kecil).</p>
         </div>
       `;
     }
@@ -731,5 +783,84 @@ const GuruDashboard = {
         </div>
       </div>
     `;
+  },
+
+  // --- PERMINTAAN SISWA ---
+  async renderPermintaanSiswa(container) {
+    const user = Auth.getUser();
+    const kelasRes = await API.get('getKelasByGuru', { guru_id: user.id });
+    const kelasList = kelasRes.data || [];
+    
+    const enrollRes = await API.get('getEnrollments');
+    const allEnroll = enrollRes.data || [];
+    
+    // Filter pending enrollments for guru's classes
+    const pendingRequests = allEnroll.filter(e => e.status === 'pending' && kelasList.some(k => k.id == e.kelas_id));
+
+    container.innerHTML = `
+      <div class="space-y-4 animate-fadeIn">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-bold text-white">Permintaan Bergabung</h2>
+          <button onclick="Router.navigate('dashboard')" class="text-xs text-slate-500 hover:text-white transition-all">
+            <i class="fas fa-arrow-left mr-1"></i> Kembali
+          </button>
+        </div>
+
+        <div class="space-y-3">
+          ${pendingRequests.length === 0 ? `
+            <div class="flex flex-col items-center justify-center py-16">
+              <div class="w-16 h-16 rounded-full bg-slate-800/50 flex items-center justify-center mb-4">
+                <i class="fas fa-user-check text-slate-600 text-2xl"></i>
+              </div>
+              <p class="text-sm text-slate-500">Tidak ada permintaan menunggu</p>
+            </div>
+          ` : ''}
+          
+          ${pendingRequests.map(e => {
+            const kl = kelasList.find(k => k.id == e.kelas_id);
+            return `
+              <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                  <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center text-indigo-400 font-bold">
+                    ${Auth.getInitials(e.nama_siswa || e.username)}
+                  </div>
+                  <div>
+                    <h4 class="text-sm font-bold text-white">${e.nama_siswa || e.username}</h4>
+                    <p class="text-[11px] text-slate-500">Ingin bergabung ke: <span class="text-indigo-400 font-medium">${kl ? kl.nama_kelas : 'Kelas ?'}</span></p>
+                    <p class="text-[9px] text-slate-600 mt-0.5">${new Date(e.enrolled_at).toLocaleString()}</p>
+                  </div>
+                </div>
+                <div class="flex gap-2">
+                  <button onclick="GuruDashboard.approveSiswa(${e.id})" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 text-xs font-bold hover:bg-emerald-500 hover:text-white transition-all">SETUJUI</button>
+                  <button onclick="GuruDashboard.rejectSiswa(${e.id})" class="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 text-xs font-bold hover:bg-red-500 hover:text-white transition-all">TOLAK</button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  },
+
+  async approveSiswa(enrollmentId) {
+    if (!confirm('Setujui siswa ini untuk bergabung ke kelas?')) return;
+    const res = await API.post('updateEnrollmentStatus', { id: enrollmentId, status: 'active' });
+    if (res.success) {
+      showToast('Siswa berhasil disetujui', 'success');
+      this.renderPermintaanSiswa(document.getElementById('main-content'));
+    } else {
+      showToast(res.error || 'Gagal menyetujui', 'error');
+    }
+  },
+
+  async rejectSiswa(enrollmentId) {
+    if (!confirm('Tolak permintaan bergabung siswa ini?')) return;
+    const res = await API.post('updateEnrollmentStatus', { id: enrollmentId, status: 'rejected' });
+    if (res.success) {
+      showToast('Permintaan ditolak', 'warning');
+      this.renderPermintaanSiswa(document.getElementById('main-content'));
+    } else {
+      showToast(res.error || 'Gagal menolak', 'error');
+    }
   }
 };
